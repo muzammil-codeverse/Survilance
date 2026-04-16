@@ -1,7 +1,18 @@
 """
 extract_frames.py
 -----------------
-Extract frames from raw videos into a per-class output folder.
+DEPRECATED — not used in the current pipeline.
+
+The UCF-Crime dataset is distributed as pre-extracted PNG frame sequences
+(CLASS/VIDEO_FOLDER/frame.png). No video decoding is needed.
+
+Current pipeline:
+    optical_flow.py  →  build_dataset.py  →  validate_dataset.py
+
+This script is kept only as a reference for datasets that ship raw .mp4/.avi
+files. Do NOT call it as part of the standard pipeline.
+-----------------
+Original purpose: Extract frames from raw videos into a per-class output folder.
 
 Usage:
     python scripts/extract_frames.py --input <raw_video_root> --output <frames_root>

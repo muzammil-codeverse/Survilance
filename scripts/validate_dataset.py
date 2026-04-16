@@ -84,33 +84,35 @@ def check_label_map(processed_root: str) -> list[str]:
 
 
 def check_frames_dir(processed_root: str) -> list[str]:
+    """
+    Validates the processed split directories (train/val/test) for non-empty
+    class folders.  The raw frames dir is no longer required — UCF-Crime ships
+    pre-extracted PNGs, so extract_frames.py is not part of the pipeline.
+    """
     errors = []
-    frames_dir = os.path.join(processed_root, "frames")
 
-    if not os.path.isdir(frames_dir):
-        # frames dir is optional if splits are already built
-        logger.info(f"[frames] directory not found (skipping): {frames_dir}")
-        return errors
+    # Check each split for at least one class with images
+    for split in SPLITS:
+        split_dir = os.path.join(processed_root, split)
+        if not os.path.isdir(split_dir):
+            continue   # missing splits caught by check_splits()
 
-    class_dirs = [
-        d for d in os.listdir(frames_dir)
-        if os.path.isdir(os.path.join(frames_dir, d))
-    ]
-
-    if not class_dirs:
-        errors.append(f"No class sub-directories in frames dir: {frames_dir}")
-        return errors
-
-    for cls in class_dirs:
-        cls_dir = os.path.join(frames_dir, cls)
-        images = [
-            f for f in os.listdir(cls_dir)
-            if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS
+        class_dirs = [
+            d for d in os.listdir(split_dir)
+            if os.path.isdir(os.path.join(split_dir, d))
         ]
-        if not images:
-            errors.append(f"EMPTY class folder: {cls_dir}")
-        else:
-            logger.info(f"[frames] {cls}: {len(images)} images OK")
+
+        for cls in class_dirs:
+            cls_dir = os.path.join(split_dir, cls)
+            images = [
+                f for f in os.listdir(cls_dir)
+                if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS
+            ]
+            if not images:
+                errors.append(f"EMPTY class folder in {split}: {cls_dir}")
+
+    if not errors:
+        logger.info("[frames] All split class folders contain images — OK")
 
     return errors
 
