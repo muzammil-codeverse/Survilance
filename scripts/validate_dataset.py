@@ -17,8 +17,8 @@ Usage:
 
 Example:
     python scripts/validate_dataset.py \
-        --input /content/dataset \
-        --flow  /content/flow
+        --input /path/to/dataset \
+        --flow  /path/to/flow
 """
 
 import argparse

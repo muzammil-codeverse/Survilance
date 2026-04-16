@@ -1,35 +1,44 @@
 """
 optical_flow.py
 ---------------
-Compute dense Farneback optical flow from pre-extracted PNG/JPG frame sequences.
+Compute dense Farneback optical flow from PNG/JPG image sequences.
 
-Expected input layout (UCF-Crime style — frames already on disk):
+Supports two input layouts automatically:
+
+  Layout A — flat (frames directly in class folder):
+    INPUT/
+        Abuse/
+            frame001.png
+            frame002.png
+        Arrest/
+            ...
+
+  Layout B — nested (UCF-Crime style, frames inside video sub-folders):
     INPUT/
         Abuse/
             Abuse001/
                 frame001.png
-                frame002.png
-                ...
             Abuse002/
                 ...
-        Arrest/
-            ...
 
-Output layout (mirrors input structure):
+The script detects the layout per class folder and handles both.
+
+Output mirrors the input structure with .npy flow maps:
     OUTPUT/
         Abuse/
+            frame001_flow.npy     # Layout A
+        ─ or ─
+        Abuse/
             Abuse001/
-                frame001_flow.npy   # flow from frame001 → frame002, shape (H,W,2)
-                frame002_flow.npy
-                ...
+                frame001_flow.npy # Layout B
 
 Usage:
     python scripts/optical_flow.py --input <frames_root> --output <flow_root>
 
 Example:
-    python scripts/optical_flow.py \
-        --input  /content/UCF_Crime_Frames \
-        --output /content/flow
+    python scripts/optical_flow.py \\
+        --input  /path/to/UCF_Crime_Frames \\
+        --output /path/to/flow
 """
 
 import argparse
@@ -47,7 +56,6 @@ logger = get_logger("optical_flow")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 
-# Farneback parameters — tuned for 224×224 frames
 FB_PARAMS = dict(
     pyr_scale=0.5,
     levels=3,
@@ -61,56 +69,57 @@ FB_PARAMS = dict(
 
 def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Compute Farneback optical flow from PNG/JPG frame sequences."
+        description="Compute Farneback optical flow from PNG/JPG image sequences."
     )
     parser.add_argument(
         "--input",
         required=True,
-        help="Root directory containing CLASS/VIDEO_FOLDER/frame.png structure.",
+        help="Root directory of image sequences (CLASS/*.png or CLASS/VIDEO/*.png).",
     )
     parser.add_argument(
         "--output",
         required=True,
-        help="Root directory to write flow .npy maps (mirrors input structure).",
+        help="Root directory to write .npy flow maps (mirrors input structure).",
     )
     return parser.parse_args()
 
 
-def load_frames(folder: str) -> list:
+# ---------------------------------------------------------------------------
+# Core helpers
+# ---------------------------------------------------------------------------
+
+def load_frames(folder: str) -> list[tuple[str, np.ndarray]]:
     """
     Load all PNG/JPG images from `folder` in sorted filename order.
 
     Returns:
-        List of BGR numpy arrays. Empty list if no images found.
+        [(filename, bgr_array), ...]  — empty list if no images found.
     """
     files = sorted(
         f for f in os.listdir(folder)
         if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS
     )
-
     frames = []
     for fname in files:
         img = cv2.imread(os.path.join(folder, fname))
         if img is None:
-            logger.warning(f"Could not read image: {os.path.join(folder, fname)}")
+            logger.warning(f"Skipping unreadable image: {os.path.join(folder, fname)}")
             continue
         frames.append((fname, img))
+    return frames
 
-    return frames   # [(filename, bgr_array), ...]
 
-
-def compute_optical_flow(frames: list) -> list:
+def compute_optical_flow(frames: list[tuple[str, np.ndarray]]) -> list[tuple[str, np.ndarray]]:
     """
-    Compute Farneback dense optical flow between every consecutive frame pair.
+    Compute Farneback dense flow between every consecutive frame pair.
 
     Args:
-        frames: List of (filename, bgr_array) tuples, in temporal order.
+        frames: [(filename, bgr_array), ...] in temporal order.
 
     Returns:
-        List of (src_stem, flow_array) where flow_array.shape == (H, W, 2).
+        [(src_stem, flow_array), ...]  flow_array.shape == (H, W, 2).
     """
     results = []
-
     if len(frames) < 2:
         return results
 
@@ -118,34 +127,28 @@ def compute_optical_flow(frames: list) -> list:
 
     for i in range(1, len(frames)):
         curr_gray = cv2.cvtColor(frames[i][1], cv2.COLOR_BGR2GRAY)
-
-        flow = cv2.calcOpticalFlowFarneback(
-            prev_gray, curr_gray, None, **FB_PARAMS
-        )  # (H, W, 2) float32
-
+        flow = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None, **FB_PARAMS)
         src_stem = os.path.splitext(frames[i - 1][0])[0]
         results.append((src_stem, flow))
-
         prev_gray = curr_gray
 
     return results
 
 
-def process_video_folder(video_folder: str, out_folder: str) -> int:
+def process_sequence(frame_folder: str, out_folder: str) -> int:
     """
-    Process a single video folder: load frames → compute flow → save .npy files.
+    Load frames from `frame_folder`, compute flow, save .npy files to `out_folder`.
 
     Returns:
         Number of flow maps saved.
     """
-    frames = load_frames(video_folder)
-
-    if not frames:
-        logger.warning(f"No images found in: {video_folder}")
-        return 0
+    frames = load_frames(frame_folder)
 
     if len(frames) < 2:
-        logger.warning(f"Need ≥2 frames for flow, skipping: {video_folder}")
+        if frames:
+            logger.warning(f"Need ≥2 frames for flow, skipping: {frame_folder}")
+        else:
+            logger.warning(f"No images found, skipping: {frame_folder}")
         return 0
 
     flow_pairs = compute_optical_flow(frames)
@@ -157,10 +160,64 @@ def process_video_folder(video_folder: str, out_folder: str) -> int:
     return len(flow_pairs)
 
 
+# ---------------------------------------------------------------------------
+# Layout detection + main walker
+# ---------------------------------------------------------------------------
+
+def _has_images(folder: str) -> bool:
+    return any(
+        os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS
+        for f in os.listdir(folder)
+    )
+
+
+def _has_subfolders(folder: str) -> bool:
+    return any(
+        os.path.isdir(os.path.join(folder, d))
+        for d in os.listdir(folder)
+    )
+
+
+def process_class(cls_in: str, cls_out: str) -> tuple[int, int]:
+    """
+    Auto-detect layout and process one class directory.
+
+    Returns:
+        (video_count, flow_map_count)
+    """
+    total_vids = 0
+    total_maps = 0
+
+    if _has_subfolders(cls_in):
+        # Layout B: CLASS/VIDEO_FOLDER/frame.png
+        video_folders = sorted(
+            d for d in os.listdir(cls_in)
+            if os.path.isdir(os.path.join(cls_in, d))
+        )
+        for vf in video_folders:
+            n = process_sequence(
+                frame_folder=os.path.join(cls_in, vf),
+                out_folder=os.path.join(cls_out, vf),
+            )
+            total_maps += n
+            total_vids += 1
+
+    elif _has_images(cls_in):
+        # Layout A: CLASS/frame.png  (all frames treated as one sequence)
+        n = process_sequence(frame_folder=cls_in, out_folder=cls_out)
+        total_maps += n
+        total_vids += 1
+
+    else:
+        logger.warning(f"No images or sub-folders found in: {cls_in}")
+
+    return total_vids, total_maps
+
+
 def process_optical_flow(input_root: str, output_root: str) -> None:
     """
-    Walk CLASS/VIDEO_FOLDER structure under `input_root` and compute flow for
-    every video folder.
+    Walk all class directories under `input_root` and compute optical flow.
+    Handles both flat (CLASS/*.png) and nested (CLASS/VIDEO/*.png) layouts.
     """
     log_stage(logger, "Optical Flow Computation", f"src={input_root}  dst={output_root}")
 
@@ -174,38 +231,28 @@ def process_optical_flow(input_root: str, output_root: str) -> None:
     )
 
     if not class_dirs:
-        logger.error(f"No class sub-directories in: {input_root}")
+        logger.error(f"No class sub-directories found in: {input_root}")
         sys.exit(1)
 
     logger.info(f"Found {len(class_dirs)} classes: {class_dirs}")
 
+    total_vids = 0
     total_maps = 0
-    total_videos = 0
 
     for cls in class_dirs:
-        cls_in = os.path.join(input_root, cls)
-        cls_out = os.path.join(output_root, cls)
-
-        video_folders = sorted(
-            d for d in os.listdir(cls_in)
-            if os.path.isdir(os.path.join(cls_in, d))
+        vids, maps = process_class(
+            cls_in=os.path.join(input_root, cls),
+            cls_out=os.path.join(output_root, cls),
         )
+        total_vids += vids
+        total_maps += maps
+        logger.info(f"  [{cls}] sequences={vids} | flow maps={maps}")
 
-        cls_maps = 0
-        for vf in video_folders:
-            n = process_video_folder(
-                video_folder=os.path.join(cls_in, vf),
-                out_folder=os.path.join(cls_out, vf),
-            )
-            cls_maps += n
-            total_videos += 1
-
-        total_maps += cls_maps
-        logger.info(f"  [{cls}] {len(video_folders)} videos | {cls_maps} flow maps saved")
-
-    logger.info(f"Done. Videos={total_videos} | Total flow maps={total_maps}")
+    logger.info(f"Done. Total sequences={total_vids} | Total flow maps={total_maps}")
 
 
 if __name__ == "__main__":
     args = get_args()
-    process_optical_flow(input_root=args.input, output_root=args.output)
+    INPUT_PATH = args.input
+    OUTPUT_PATH = args.output
+    process_optical_flow(input_root=INPUT_PATH, output_root=OUTPUT_PATH)

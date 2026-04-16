@@ -1,3 +1,16 @@
+"""
+preprocessing.py
+----------------
+SUPERSEDED by scripts/optical_flow.py for the current pipeline.
+
+The active pipeline uses scripts/optical_flow.py which:
+  - Reads pre-extracted PNG/JPG frame sequences (no VideoCapture)
+  - Supports both flat (CLASS/*.png) and nested (CLASS/VIDEO/*.png) layouts
+  - Is fully CLI-driven via --input / --output
+
+This module is retained only as a reference for raw-video datasets.
+"""
+
 import cv2
 
 

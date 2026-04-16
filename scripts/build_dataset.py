@@ -37,8 +37,8 @@ Usage:
 
 Example:
     python scripts/build_dataset.py \
-        --input  /content/UCF_Crime_Frames \
-        --output /content/dataset
+        --input  /path/to/UCF_Crime_Frames \
+        --output /path/to/dataset
 """
 
 import argparse
