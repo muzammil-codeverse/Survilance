@@ -1,25 +1,52 @@
+# Python
 venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
+dist/
+build/
 
+# Model binaries
 *.h5
 *.keras
 *.pt
+*.pth
+*.ckpt
+*.pb
 
+# Large data — NEVER commit
 data/
+datasets/
+processed/
+*.npy
+*.zip
+*.tar.gz
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Models directory
 models/
 
-# Dataset raw files and large binaries — keep directory structure only
-datasets/ucf_crime/*
-datasets/processed/frames/
-datasets/processed/train/
-datasets/processed/val/
-datasets/processed/test/
-datasets/optical_flow/
-!datasets/**/.gitkeep
-*.npy
-
+# Secrets / env
 .env
+.env.*
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Keep directory structure only
+!data/.gitkeep
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!datasets/.gitkeep
+!datasets/ucf_crime/.gitkeep
+!datasets/processed/.gitkeep
+!datasets/optical_flow/.gitkeep
