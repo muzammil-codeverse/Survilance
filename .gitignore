@@ -11,5 +11,15 @@ __pycache__/
 data/
 models/
 
+# Dataset raw files and large binaries — keep directory structure only
+datasets/ucf_crime/*
+datasets/processed/frames/
+datasets/processed/train/
+datasets/processed/val/
+datasets/processed/test/
+datasets/optical_flow/
+!datasets/**/.gitkeep
+*.npy
+
 .env
 .DS_Store
