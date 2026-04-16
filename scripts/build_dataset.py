@@ -1,23 +1,23 @@
 """
 build_dataset.py
 ----------------
-Reads extracted frames from datasets/processed/frames/, creates a class→label
-mapping, performs a stratified 70/20/10 train/val/test split, and writes the
-final structure to datasets/processed/{train,val,test}/.
+Merge frames (and optionally flow maps), create a label mapping, perform a
+stratified 70/20/10 train/val/test split, and write the final split structure.
 
-Output layout:
-    datasets/processed/
-        label_map.json          # {"Abuse": 0, "Arrest": 1, ...}
-        train/
-            Abuse/  *.jpg
-            Arrest/ *.jpg
-            ...
-        val/
-            ...
-        test/
-            ...
+Usage:
+    python scripts/build_dataset.py \
+        --frames_input <frames_root> \
+        --output       <output_root> \
+        [--flow_input  <flow_root>]
+
+Example:
+    python scripts/build_dataset.py \
+        --frames_input /content/frames \
+        --flow_input   /content/flow \
+        --output       /content/dataset
 """
 
+import argparse
 import json
 import os
 import random
@@ -26,33 +26,55 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from config.settings import (
-    PROCESSED_PATH,
-    TRAIN_RATIO,
-    VAL_RATIO,
-)
+from config.settings import TRAIN_RATIO, VAL_RATIO
 from utils.logger import get_logger, log_stage, log_dataset_stats
 
 logger = get_logger("build_dataset")
 
-FRAMES_DIR = os.path.join(PROCESSED_PATH, "frames")
-LABEL_MAP_PATH = os.path.join(PROCESSED_PATH, "label_map.json")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
-random.seed(42)  # reproducible splits
+random.seed(42)
+
+
+def get_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Build stratified train/val/test splits from extracted frames."
+    )
+    parser.add_argument(
+        "--frames_input",
+        required=True,
+        help="Root directory of extracted frames (output of extract_frames.py).",
+    )
+    parser.add_argument(
+        "--output",
+        required=True,
+        help="Root directory to write train/val/test splits and label_map.json.",
+    )
+    parser.add_argument(
+        "--flow_input",
+        default=None,
+        help="(Optional) Root directory of flow maps. Logged but not copied into splits.",
+    )
+    parser.add_argument(
+        "--train-ratio",
+        type=float,
+        default=TRAIN_RATIO,
+        help=f"Fraction of samples for training (default: {TRAIN_RATIO}).",
+    )
+    parser.add_argument(
+        "--val-ratio",
+        type=float,
+        default=VAL_RATIO,
+        help=f"Fraction of samples for validation (default: {VAL_RATIO}).",
+    )
+    return parser.parse_args()
 
 
 def _collect_samples(frames_root: str) -> tuple[dict, list]:
-    """
-    Returns:
-        label_map  — {class_name: int}
-        samples    — [(abs_path, label_int), ...]
-    """
     class_dirs = sorted(
         d for d in os.listdir(frames_root)
         if os.path.isdir(os.path.join(frames_root, d))
     )
-
     label_map = {cls: idx for idx, cls in enumerate(class_dirs)}
     samples = []
 
@@ -70,23 +92,17 @@ def _stratified_split(
     train_ratio: float,
     val_ratio: float,
 ) -> tuple[list, list, list]:
-    """
-    Stratify by class, then split each class into train/val/test.
-    """
-    # Group by class label
     class_buckets: dict[int, list] = {}
     for item in samples:
-        label = item[1]
-        class_buckets.setdefault(label, []).append(item)
+        class_buckets.setdefault(item[1], []).append(item)
 
     train, val, test = [], [], []
 
-    for label, items in class_buckets.items():
+    for items in class_buckets.values():
         random.shuffle(items)
         n = len(items)
         n_train = max(1, int(n * train_ratio))
         n_val = max(1, int(n * val_ratio))
-
         train.extend(items[:n_train])
         val.extend(items[n_train: n_train + n_val])
         test.extend(items[n_train + n_val:])
@@ -95,43 +111,60 @@ def _stratified_split(
 
 
 def _copy_split(split_samples: list, split_name: str, output_root: str) -> None:
-    """Copy files into output_root/{split_name}/{class_name}/."""
     for src_path, _label, cls_name in split_samples:
         dst_dir = os.path.join(output_root, split_name, cls_name)
         os.makedirs(dst_dir, exist_ok=True)
         shutil.copy2(src_path, dst_dir)
 
 
-def build_dataset(frames_root: str, output_root: str) -> None:
-    log_stage(logger, "Dataset Build", f"src={frames_root}  dst={output_root}")
+def build_dataset(
+    frames_input: str,
+    output: str,
+    flow_input: str | None,
+    train_ratio: float,
+    val_ratio: float,
+) -> None:
+    log_stage(logger, "Dataset Build", f"frames={frames_input}  out={output}")
 
-    if not os.path.isdir(frames_root):
-        logger.error(f"Frames directory not found: {frames_root}")
+    if flow_input:
+        if os.path.isdir(flow_input):
+            logger.info(f"Flow input registered: {flow_input}")
+        else:
+            logger.warning(f"Flow input not found (skipping): {flow_input}")
+
+    if not os.path.isdir(frames_input):
+        logger.error(f"Frames directory not found: {frames_input}")
         sys.exit(1)
 
-    label_map, samples = _collect_samples(frames_root)
+    label_map, samples = _collect_samples(frames_input)
 
     if not samples:
-        logger.error("No image samples found. Run extract_frames.py first.")
+        logger.error("No images found. Run extract_frames.py first.")
         sys.exit(1)
 
-    logger.info(f"Total samples: {len(samples)} | Classes: {len(label_map)}")
+    logger.info(f"Samples: {len(samples)} | Classes: {len(label_map)}")
 
-    # Persist label mapping
-    os.makedirs(output_root, exist_ok=True)
-    with open(LABEL_MAP_PATH, "w") as f:
+    os.makedirs(output, exist_ok=True)
+    label_map_path = os.path.join(output, "label_map.json")
+    with open(label_map_path, "w") as f:
         json.dump(label_map, f, indent=2)
-    logger.info(f"Label map saved → {LABEL_MAP_PATH}")
+    logger.info(f"label_map.json saved → {label_map_path}")
 
-    train, val, test = _stratified_split(samples, TRAIN_RATIO, VAL_RATIO)
+    train, val, test = _stratified_split(samples, train_ratio, val_ratio)
 
     for split_name, split_data in [("train", train), ("val", val), ("test", test)]:
-        _copy_split(split_data, split_name, output_root)
+        _copy_split(split_data, split_name, output)
         log_dataset_stats(logger, split_name, len(split_data), list(label_map.keys()))
 
-    logger.info("Dataset build complete.")
-    logger.info(f"  train={len(train)}  val={len(val)}  test={len(test)}")
+    logger.info(f"Done. train={len(train)}  val={len(val)}  test={len(test)}")
 
 
 if __name__ == "__main__":
-    build_dataset(FRAMES_DIR, PROCESSED_PATH)
+    args = get_args()
+    build_dataset(
+        frames_input=args.frames_input,
+        output=args.output,
+        flow_input=args.flow_input,
+        train_ratio=args.train_ratio,
+        val_ratio=args.val_ratio,
+    )

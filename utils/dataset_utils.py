@@ -19,16 +19,14 @@ import numpy as np
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from config.settings import PROCESSED_PATH
 from utils.logger import get_logger
 
 logger = get_logger("dataset_utils")
 
-LABEL_MAP_PATH = os.path.join(PROCESSED_PATH, "label_map.json")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
 
-def load_label_map(path: str = LABEL_MAP_PATH) -> dict:
+def load_label_map(path: str) -> dict:
     """
     Load {class_name: int} from a JSON file.
 

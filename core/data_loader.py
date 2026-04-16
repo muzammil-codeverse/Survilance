@@ -18,13 +18,12 @@ import tensorflow as tf
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from config.settings import IMG_SIZE, BATCH_SIZE, PROCESSED_PATH
+from config.settings import IMG_SIZE, BATCH_SIZE
 from utils.logger import get_logger
 
 logger = get_logger("data_loader")
 
 AUTOTUNE = tf.data.AUTOTUNE
-LABEL_MAP_PATH = os.path.join(PROCESSED_PATH, "label_map.json")
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +100,8 @@ def build_dataset(
         A tf.data.Dataset yielding (image_batch, label_batch) tensors.
     """
     if label_map is None:
-        label_map = _load_label_map(LABEL_MAP_PATH)
+        label_map_path = os.path.join(split_dir, "..", "label_map.json")
+        label_map = _load_label_map(os.path.normpath(label_map_path))
 
     paths, labels = _collect_file_label_pairs(split_dir, label_map)
 
@@ -139,13 +139,17 @@ def build_dataset(
 
 
 def load_all_splits(
-    processed_root: str = PROCESSED_PATH,
+    processed_root: str,
     batch_size: int = BATCH_SIZE,
 ) -> tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset, dict]:
     """
     Convenience loader that returns (train_ds, val_ds, test_ds, label_map).
+
+    Args:
+        processed_root: Path passed via --output to build_dataset.py
+                        (contains label_map.json and train/val/test/).
     """
-    label_map = _load_label_map(LABEL_MAP_PATH)
+    label_map = _load_label_map(os.path.join(processed_root, "label_map.json"))
 
     train_ds = build_dataset(
         os.path.join(processed_root, "train"),
